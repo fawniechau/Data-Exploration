@@ -1,0 +1,152 @@
+---
+title: "ECON 4110: Data Exploration"
+author: "Tina Chau"
+format: html
+editor: visual
+---
+
+## Quarto
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+## Running Code
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(rio)
+library(lubridate)
+library(readr)
+library(vtable)
+library(stringr)
+library(fixest)
+library(ggplot2)
+```
+
+```{r}
+# read in trends data 
+trends <- list.files('Lab3_Rawdata',pattern = 'trends_up_to', full.names = TRUE)
+data <- import_list(trends, rbind = TRUE, fill = TRUE)
+```
+
+```{r}
+# aggregate trends data 
+data <- data %>% mutate(week = str_sub(monthorweek, start = 1, end = 10))%>% mutate(week = ymd(week))%>% mutate(month = floor_date(week, 'month'))
+```
+
+```{r}
+# standardize index by school name and keyword
+data <- data %>%
+  group_by(schname, keyword) %>%
+  mutate(standardized_index = (index - mean(index)) / sd(index))
+```
+
+```{r}
+# read in Scorecard data
+scorecard <- import('Lab3_Rawdata/Most+Recent+Cohorts+(Scorecard+Elements).csv')
+
+names(scorecard)[1] <- 'unitid'
+names(scorecard)[2] <- 'opeid'
+
+```
+
+```{r}
+# read in id_name_link file
+id <- import('Lab3_Rawdata/id_name_link.csv')
+id_count <- id %>%
+  group_by(schname) %>%
+  mutate(schname_count = n()) %>%
+  filter(schname_count == 1) %>%
+  ungroup()
+```
+
+```{r}
+# merge trends and id 
+trend_and_id_merged <- inner_join(data, id, by = 'schname', copy = TRUE)
+```
+
+```{r}
+# merge trends and id with scorecard
+merged_data <- inner_join(trend_and_id_merged, scorecard, by = 'unitid')
+```
+
+```{r}
+merged_bachelor_data <- filter(merged_data, PREDDEG == 3)
+```
+
+```{r}
+combined_data <- merged_bachelor_data %>%
+  group_by(schname, monthorweek) %>%
+  mutate(weekIndex = mean(index))
+
+combined_data <- na.omit(combined_data)
+
+```
+
+```{r}
+combined_data$`md_earn_wne_p10-REPORTED-EARNINGS` <- as.numeric(combined_data$`md_earn_wne_p10-REPORTED-EARNINGS`)
+```
+
+```{r}
+# find median earnings 
+median_earnings <- median(combined_data$"md_earn_wne_p10-REPORTED-EARNINGS", na.rm = TRUE)
+
+median_earnings
+```
+
+```{r}
+# create binary variable both income and date 
+combined_data$income_category <- ifelse(combined_data$"md_earn_wne_p10-REPORTED-EARNINGS" > 41900, 'High', 'Low')
+combined_data <- combined_data %>% filter(!is.na(income_category))
+combined_data$scorecard <- ifelse(combined_data$month < as.Date("2015-09-01"), "Before", "After")
+
+
+```
+
+```{r}
+new_combined <- combined_data %>% 
+  group_by(income_category, month) %>% 
+  summarise(standardized_index = mean(standardized_index))
+
+new_combined
+```
+
+```{r}
+# create plot comparing high and low income vs. standardized index
+index_graph <- ggplot(data = new_combined, aes(x = month, y = standardized_index, color = income_category)) +
+  geom_line() +
+  geom_vline(xintercept = ymd('2015-09-01')) +
+  ggtitle('Impact of Scorecard on Google Search Results')
+
+print(index_graph)
+
+```
+
+```{r}
+# regression 
+regression <- feols(standardized_index ~ scorecard + income_category + month + scorecard * income_category, data = combined_data)
+etable(regression)
+
+```
+
+The Writeup:
+
+The question I am trying to answer here is, \"Among colleges that predominantly grant bachelor\'s degrees, did the release of the Scorecard shift student interest to high-earnings colleges relative to low-earnings ones?\" To answer this question, I created a visual of the regression above to display the performed an analysis combining visualizations and regression modeling.
+
+Firstly, I created a line plot using **`ggplot2`** to visualize the relationship between the standardized index (a measure of student interest) and time (months). I chose to display two lines, one for high-income category and another for low-income category, using different colors. This allows for a comparison between the two income categories over time. I also included a vertical line at September 2015 to highlight the release of the Scorecard, as it is an important event for this analysis.
+
+In addition to the visualization, I conducted a regression analysis using the **`feols`** function. The regression model examines the relationship between the standardized index (dependent variable) and several independent variables, including the Scorecard, income category, month, and the interaction between the Scorecard and income category. By including these variables in the model, I can assess their individual and combined effects on the standardized index. Then, to summarize the results of the regression, I used the **`etable`** function.
+
+By combining these approaches, I was able to provide a comprehensive analysis that not only visually depicted the trends but also quantitatively assessed the relationship between the Scorecard, income category, and student interest. This allowed for a greater understanding of whether the Scorecard influenced student interest in high-earnings colleges compared to low-earnings ones.
+
+Further looking into our regression results, we can see that the "Before" coefficient of -0.204 indicates that there is a decrease in the standardized index on average compared to the "After" group. This implies that there is potentially a decline in student interest prior to the scorecard release.
+
+The income_categoryLow group has a positive coefficient of 0.0698 which indicates that colleges in the low-income category have a higher standardized index compared to colleges in the high-income category.
+
+The coefficient of -0.0856 for scorecardBefore x income_categoryLowscorecard group indicates a negative relationship between scorecard and student interest for colleges in the low-income category.
+
+And lastly, the -0.0008 coefficient for month indicates a one unit change in month is associate with -.0008 decrease in the standardized index of Google search.
+
+Based on our results here, we can conclude that the release of the Scorecard had an impact on student interest in colleges. Prior to the Scorecard, there was a decrease in student interest on average. Colleges in the low-income category attracted greater student interest compared to those in the high-income category. And the Scorecard had a stronger negative effect on student interest in low-income colleges, suggesting potential disparities in perceived value and outcomes.
+
+\
